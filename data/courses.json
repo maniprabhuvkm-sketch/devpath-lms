@@ -1,0 +1,529 @@
+[
+  {
+    "id": "web-arch-301",
+    "title": "Distributed Web Systems & Production Architecture",
+    "slug": "distributed-web-systems-architecture",
+    "category": "Architecture & Systems",
+    "level": "Advanced",
+    "duration": "14 hours",
+    "rating": 4.9,
+    "enrollmentCount": 3840,
+    "instructor": {
+      "name": "Dr. Sarah Chen",
+      "role": "Principal Systems Architect",
+      "organization": "DevPath Engineering"
+    },
+    "description": "Design resilient, scalable web applications capable of handling millions of requests per second. Covers micro-frontends, edge caching, real-time message streaming, and horizontal fault tolerance.",
+    "prerequisites": ["Proficiency in Modern JavaScript (ES2022+)", "Foundational HTTP/2 & Networking knowledge", "Basic Distributed Systems concepts"],
+    "modules": [
+      {
+        "id": "mod-1",
+        "title": "Module 1: Micro-Frontend Architecture & Module Federation",
+        "duration": "4.5 hours",
+        "lessons": [
+          {
+            "id": "les-1-1",
+            "title": "Decomposing Monoliths: Module Federation Internals",
+            "readTime": "25 min",
+            "content": "### Decomposing Monoliths: Module Federation Internals\n\nModern large-scale web applications often outgrow single monolithic repositories. While monolithic frontends simplify initial development, cross-team coupling frequently degrades build times and slows deployment cadences.\n\n#### Architectural Trade-offs\n- **Independent Deployment**: Teams release features autonomously without coordinating global builds.\n- **Shared Dependencies**: Run-time deduplication prevents users from downloading redundant copies of core libraries.\n- **Contract Boundaries**: Strict TypeScript interfaces govern communication between host and remote containers.\n\n```javascript\n// Module Federation Configuration in Webpack / Vite\nexport default {\n  name: 'dashboard_host',\n  remotes: {\n    analyticsApp: 'analytics@https://cdn.devpath.io/remotes/analytics/remoteEntry.js',\n    billingApp: 'billing@https://cdn.devpath.io/remotes/billing/remoteEntry.js'\n  },\n  shared: {\n    react: { singleton: true, requiredVersion: '^18.2.0' },\n    'react-dom': { singleton: true, requiredVersion: '^18.2.0' }\n  }\n};\n```\n\n#### Fault Tolerance and Fallback Handling\nWhen consuming remote modules over high-latency or unpredictable networks, client-side boundaries must implement robust fallback lifecycles.\n\n```javascript\nasync function loadRemoteMicrofrontend(scope, module) {\n  try {\n    // Initialize the container\n    await window[scope].init(__webpack_share_scopes__.default);\n    const factory = await window[scope].get(module);\n    return factory();\n  } catch (error) {\n    console.error(`Failed to resolve remote module: ${scope}/${module}`, error);\n    return () => import('./components/GracefulFallbackView.js');\n  }\n}\n```\n\n#### Key Engineering Principles\n1. Ensure shared libraries specify exact semantic version constraints.\n2. Isolate runtime errors within micro-frontend boundaries to avoid crashing host shells.\n3. Implement localized state management and avoid global window mutations.",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "// Implement an asynchronous remote component loader with error fallback\nasync function resolveRemote(serviceName, endpoint) {\n  // Simulate remote loading with timeout\n  const timeout = 1500;\n  return new Promise((resolve, reject) => {\n    setTimeout(() => {\n      if (endpoint.includes('devpath.io')) {\n        resolve({ status: 'ONLINE', module: serviceName + '_v2.1' });\n      } else {\n        reject(new Error('Invalid CDN endpoint'));\n      }\n    }, 400);\n  });\n}\n\nresolveRemote('TelemetryService', 'https://cdn.devpath.io/assets')\n  .then(res => console.log('Loaded:', JSON.stringify(res)))\n  .catch(err => console.error('Error:', err.message));",
+              "expectedOutput": "Loaded: {\"status\":\"ONLINE\",\"module\":\"TelemetryService_v2.1\"}"
+            }
+          },
+          {
+            "id": "les-1-2",
+            "title": "Cross-Boundary State Synchronization",
+            "readTime": "30 min",
+            "content": "### Cross-Boundary State Synchronization\n\nWhen micro-frontends share a page, coordinating authentication tokens, tenant contexts, and user profiles without tight coupling requires event-driven communication patterns.\n\n#### Communication Topologies\n1. **Custom Event Bus**: Leverages the native browser `CustomEvent` API with strongly typed payloads.\n2. **BroadcastChannel API**: Facilitates cross-tab or cross-frame messaging across isolated contexts.\n3. **Decoupled State Broker**: A pub/sub broker instantiated at the shell level that exposes scoped subscriptions.\n\n```javascript\n// Enterprise Event Broker for Micro-Frontends\nclass CrossAppMessageBroker {\n  constructor() {\n    this.handlers = new Map();\n  }\n\n  subscribe(topic, callback) {\n    if (!this.handlers.has(topic)) {\n      this.handlers.set(topic, new Set());\n    }\n    this.handlers.get(topic).add(callback);\n    return () => this.handlers.get(topic).delete(callback);\n  }\n\n  publish(topic, payload) {\n    if (this.handlers.has(topic)) {\n      const immutablePayload = Object.freeze({ ...payload, timestamp: Date.now() });\n      this.handlers.get(topic).forEach(handler => {\n        try {\n          handler(immutablePayload);\n        } catch (err) {\n          console.error(`Broker error on topic [${topic}]:`, err);\n        }\n      });\n    }\n  }\n}\n```\n\n#### Security Considerations\nNever expose raw write handles to administrative state across third-party remote components. Validate schemas at every subscriber boundary.",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "const bus = new EventTarget();\nbus.addEventListener('USER_SESSION_UPDATE', (e) => {\n  console.log('Session synchronized for user:', e.detail.userId);\n});\n\n// Dispatch test session\nbus.dispatchEvent(new CustomEvent('USER_SESSION_UPDATE', {\n  detail: { userId: 'USR-8921', role: 'Staff_Engineer' }\n}));",
+              "expectedOutput": "Session synchronized for user: USR-8921"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-2",
+        "title": "Module 2: Edge Computing & Intelligent Caching Strategies",
+        "duration": "5.0 hours",
+        "lessons": [
+          {
+            "id": "les-2-1",
+            "title": "HTTP Cache-Control & Stale-While-Revalidate Mechanisms",
+            "readTime": "35 min",
+            "content": "### HTTP Cache-Control & Stale-While-Revalidate Mechanisms\n\nOptimizing web delivery latency requires deep mastery of modern caching directives. The `stale-while-revalidate` (SWR) directive bridges instantaneous client rendering with asynchronous cache warming.\n\n#### Cache Directive Hierarchy\n- `public, max-age=60, stale-while-revalidate=86400`: Deliver from edge cache instantly for 60 seconds; serve stale cached content for up to 24 hours while revalidating against origin in the background.\n- `immutable`: Informs user agents that responses with content-hashed assets will never mutate.\n- `no-cache`: Forces cache validation with `ETag` or `If-Modified-Since` headers prior to reuse.\n\n```http\nHTTP/1.1 200 OK\nContent-Type: application/json; charset=utf-8\nCache-Control: public, max-age=120, stale-while-revalidate=3600\nETag: W/\"33a64df551425fcc55e4d42a148795d9f25f89d4\"\nVary: Accept-Encoding\n```\n\n#### Edge Compute Interception Pattern\nEdge workers (Cloudflare Workers, Fastly Compute, AWS Lambda@Edge) allow processing authentication and localized rendering milliseconds away from the client.",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "function evaluateCachePolicy(headers) {\n  const cacheControl = headers['Cache-Control'] || '';\n  const isImmutable = cacheControl.includes('immutable');\n  const hasSWR = cacheControl.includes('stale-while-revalidate');\n  \n  return {\n    cached: true,\n    isImmutable,\n    backgroundRevalidation: hasSWR\n  };\n}\n\nconst testHeaders = {\n  'Cache-Control': 'public, max-age=300, stale-while-revalidate=3600'\n};\nconsole.log(JSON.stringify(evaluateCachePolicy(testHeaders)));",
+              "expectedOutput": "{\"cached\":true,\"isImmutable\":false,\"backgroundRevalidation\":true}"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-3",
+        "title": "Module 3: Real-Time Data Streaming with WebSockets & Server-Sent Events",
+        "duration": "4.5 hours",
+        "lessons": [
+          {
+            "id": "les-3-1",
+            "title": "Transport Selection: WebSockets vs SSE vs HTTP/3 WebTransport",
+            "readTime": "30 min",
+            "content": "### Transport Selection: WebSockets vs SSE vs HTTP/3 WebTransport\n\nChoosing the correct protocol for live data updates directly impacts memory utilization, battery consumption, and proxy pass-through rates.\n\n| Feature | WebSockets | Server-Sent Events (SSE) | WebTransport |\n| :--- | :--- | :--- | :--- |\n| **Directionality** | Full-Duplex (Bidirectional) | Simplex (Server-to-Client) | Full-Duplex Multiplexed |\n| **Transport** | TCP (Upgrade handshake) | HTTP/1.1 or HTTP/2 | UDP (QUIC) |\n| **Auto Reconnect** | Manual implementation | Native browser handling | Protocol-level recovery |\n| **Firewall Traversal** | Blocked by some enterprise proxies | Standard HTTP streaming | Native QUIC handling |\n\n#### Production Resilient SSE Client\n\n```javascript\nfunction connectEventStream(endpoint, onMessage, onError) {\n  const eventSource = new EventSource(endpoint, { withCredentials: true });\n\n  eventSource.onmessage = (event) => {\n    try {\n      const payload = JSON.parse(event.data);\n      onMessage(payload);\n    } catch (parseError) {\n      console.error('Invalid SSE frame JSON:', parseError);\n    }\n  };\n\n  eventSource.onerror = (err) => {\n    if (eventSource.readyState === EventSource.CLOSED) {\n      console.warn('Stream closed by server.');\n    }\n    onError(err);\n  };\n\n  return () => eventSource.close();\n}\n```",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "class HeartbeatMonitor {\n  constructor(intervalMs) {\n    this.intervalMs = intervalMs;\n    this.lastPing = Date.now();\n  }\n  recordPing() {\n    this.lastPing = Date.now();\n  }\n  isAlive() {\n    return (Date.now() - this.lastPing) <= (this.intervalMs * 1.5);\n  }\n}\n\nconst monitor = new HeartbeatMonitor(1000);\nconsole.log('Heartbeat status:', monitor.isAlive());",
+              "expectedOutput": "Heartbeat status: true"
+            }
+          }
+        ]
+      }
+    ],
+    "quiz": {
+      "id": "quiz-arch-301",
+      "title": "Certification Examination: Distributed Web Systems Architecture",
+      "passingScore": 80,
+      "timeLimitMinutes": 20,
+      "questions": [
+        {
+          "id": "q1",
+          "text": "In a Webpack Module Federation setup, what is the consequence of configuring a shared library with 'singleton: true' when two remotes require conflicting major versions?",
+          "options": [
+            "The host fails to boot and produces a fatal Webpack compilation error.",
+            "A runtime warning is emitted, and the highest compatible or host-loaded version is used across all remotes.",
+            "Each remote automatically clones and injects its own version into a separate JavaScript realm.",
+            "The browser initiates a synchronous fetch to re-bundle the dependency tree at runtime."
+          ],
+          "correctIndex": 1,
+          "explanation": "When singleton: true is defined, Module Federation permits only one instance of the library in the shared scope. If versions are incompatible according to semantic version constraints, a runtime warning is logged and the highest loaded instance is reused to prevent multiple React/DOM reconciler instances."
+        },
+        {
+          "id": "q2",
+          "text": "Under what engineering circumstance is Server-Sent Events (SSE) objectively preferable over WebSockets?",
+          "options": [
+            "When high-frequency binary data packets (such as audio streams) must be transmitted in full duplex.",
+            "When communication is unidirectional from server to client, requiring native auto-reconnection and seamless HTTP/2 multiplexing through corporate firewalls.",
+            "When peer-to-peer UDP packet transmission is mandated by strict real-time gaming latencies.",
+            "When the client needs to initiate frequent RPC requests across the same underlying persistent socket."
+          ],
+          "correctIndex": 1,
+          "explanation": "SSE operates over standard HTTP, natively benefits from HTTP/2 multiplexing, traverses corporate firewalls without special TCP socket upgrades, and includes built-in browser automatic reconnection with message ID tracking."
+        },
+        {
+          "id": "q3",
+          "text": "What does the 'stale-while-revalidate' directive instruct an edge CDN or browser cache to perform?",
+          "options": [
+            "Immediately purge stale items from memory and force the browser to display a loading skeleton until origin responds.",
+            "Return cached assets immediately while asynchronously dispatching a revalidation request to update the cache for subsequent requests.",
+            "Permanently cache the response on disk until the user manually triggers a hard browser reload.",
+            "Compress all outgoing payloads with Brotli encoding before evaluating the ETag header."
+          ],
+          "correctIndex": 1,
+          "explanation": "Stale-While-Revalidate allows the cache to respond immediately with stale content within a defined window, while initiating an asynchronous revalidation request to refresh the cache in the background."
+        },
+        {
+          "id": "q4",
+          "text": "When decoupling micro-frontends on a single page, which architectural approach provides the cleanest isolation and boundary defense?",
+          "options": [
+            "Binding state directly to 'window.globalState' and letting all remotes mutate properties directly.",
+            "Employing a strongly typed Event Broker or CustomEvent bus with immutable payloads and localized error boundaries.",
+            "Importing the host application root component directly into every individual remote bundle.",
+            "Executing each remote inside an invisible iframe with postMessage serialization for every DOM event."
+          ],
+          "correctIndex": 1,
+          "explanation": "A strongly typed event broker or CustomEvent bus provides loose coupling, decouples deployment dependencies, enforces immutable message payloads, and preserves native DOM rendering performance without iframe overhead."
+        }
+      ]
+    }
+  },
+  {
+    "id": "js-internals-401",
+    "title": "Advanced JavaScript Engine Internals & Asynchronous Runtime",
+    "slug": "javascript-engine-internals-runtime",
+    "category": "Core Engineering",
+    "level": "Advanced",
+    "duration": "12 hours",
+    "rating": 4.95,
+    "enrollmentCount": 5120,
+    "instructor": {
+      "name": "Marcus Vance",
+      "role": "V8 Runtime Specialist",
+      "organization": "DevPath Core Lab"
+    },
+    "description": "Master the internal architecture of modern JavaScript engines. Understand the V8 compilation pipeline, hidden classes (shapes), inline caching, event loop microtask queues, and low-level memory profiling.",
+    "prerequisites": ["Deep understanding of JavaScript closures, prototypes, and ES6+", "Basic knowledge of compiler concepts (AST, Bytecode)"],
+    "modules": [
+      {
+        "id": "mod-js-1",
+        "title": "Module 1: The V8 Compilation Pipeline & Shape Transitions",
+        "duration": "4.0 hours",
+        "lessons": [
+          {
+            "id": "les-js-1-1",
+            "title": "Ignition, TurboFan, and Inline Caches (IC)",
+            "readTime": "30 min",
+            "content": "### Ignition, TurboFan, and Inline Caches (IC)\n\nThe V8 JavaScript engine utilizes a multi-tier compilation pipeline to balance fast startup latency with peak execution speed.\n\n#### Engine Pipeline Phases\n1. **Parser**: Converts source code into an Abstract Syntax Tree (AST).\n2. **Ignition Interpreter**: Generates memory-efficient bytecode from the AST for immediate execution.\n3. **Profiler**: Identifies hot functions and collects type feedback vectors.\n4. **TurboFan Optimizing Compiler**: Compiles hot bytecode into highly optimized machine code based on recorded type assumptions.\n\n#### Hidden Classes & Object Shapes\nJavaScript objects are dynamically typed, but V8 internally models them with rigid transition graphs termed **Hidden Classes** (or Shapes).\n\n```javascript\n// Monomorphic property initialization (Optimal Shape consistency)\nfunction createPoint(x, y) {\n  this.x = x;\n  this.y = y;\n}\n\nconst p1 = new createPoint(10, 20); // Shape A -> Shape B\nconst p2 = new createPoint(30, 40); // Shape A -> Shape B (Reuses same shape)\n\n// Polymorphic deoptimization anti-pattern:\nconst p3 = {};\np3.y = 20; // Starts with property y\np3.x = 10; // Shape differs from p1/p2, causing inline cache miss\n```",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "class BenchmarkEntity {\n  constructor(id, tag) {\n    this.id = id;\n    this.tag = tag;\n  }\n}\n\nconst collection = [];\nfor (let i = 0; i < 1000; i++) {\n  collection.push(new BenchmarkEntity(i, 'system_metric'));\n}\n\nconsole.log('Collection initialized with shape integrity:', collection.length);",
+              "expectedOutput": "Collection initialized with shape integrity: 1000"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-js-2",
+        "title": "Module 2: Microtasks, Macrotasks & Event Loop Scheduling",
+        "duration": "4.5 hours",
+        "lessons": [
+          {
+            "id": "les-js-2-1",
+            "title": "Event Loop Turn: Microtask Checkpoint Semantics",
+            "readTime": "35 min",
+            "content": "### Event Loop Turn: Microtask Checkpoint Semantics\n\nThe HTML Event Loop specification governs the precise execution order between synchronous call stacks, microtask checkpoints, animation frame callbacks, and macrotask queues.\n\n#### Execution Sequence per Turn\n1. **Execute Task**: Select the oldest task from the macrotask queue (`setTimeout`, `setInterval`, I/O, `postMessage`).\n2. **Microtask Checkpoint**: Drain the microtask queue completely. Promises (`.then`, `.catch`), `queueMicrotask`, and `MutationObserver` callbacks run until the queue is exhausted, including microtasks queued during the checkpoint.\n3. **Render Pipeline**: Evaluate `requestAnimationFrame` callbacks, execute layout calculations, and perform compositing.\n4. **Idle Execution**: Run `requestIdleCallback` if browser frame deadline allows.\n\n```javascript\nconsole.log('1. Main thread stack');\n\nsetTimeout(() => {\n  console.log('4. Macrotask (setTimeout)');\n}, 0);\n\nPromise.resolve().then(() => {\n  console.log('2. Microtask 1');\n  queueMicrotask(() => {\n    console.log('3. Microtask 2 (queued inside checkpoint)');\n  });\n});\n```",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "const executionOrder = [];\n\nexecutionOrder.push('sync');\n\nqueueMicrotask(() => {\n  executionOrder.push('microtask');\n  console.log('Trace:', executionOrder.join(' -> '));\n});\n\nsetTimeout(() => {\n  executionOrder.push('macrotask');\n}, 0);",
+              "expectedOutput": "Trace: sync -> microtask"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-js-3",
+        "title": "Module 3: Memory Profiling & Garbage Collection Internals",
+        "duration": "3.5 hours",
+        "lessons": [
+          {
+            "id": "les-js-3-1",
+            "title": "Generational Garbage Collection: Scavenger vs Major Mark-Sweep",
+            "readTime": "30 min",
+            "content": "### Generational Garbage Collection: Scavenger vs Major Mark-Sweep\n\nV8 partitions heap memory based on the **Generational Hypothesis**: most objects die young.\n\n- **New Space (Nursery)**: Managed by the Minor GC (Scavenger). Operates via Cheney's copying algorithm with fast allocation pointers.\n- **Old Space**: Stores long-lived objects promoted after surviving two GC cycles. Managed by Major GC (Mark-Sweep-Compact).\n- **WeakRef & FinalizationRegistry**: Allows safe tracking of garbage-collected objects without preventing their deallocation.",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "let target = { token: 'AUTH_KEY_992' };\nconst weakRef = new WeakRef(target);\n\n// Verify reference dereferencing\nconst derefValue = weakRef.deref();\nconsole.log('Deref status:', derefValue !== undefined ? 'Active' : 'Collected');",
+              "expectedOutput": "Deref status: Active"
+            }
+          }
+        ]
+      }
+    ],
+    "quiz": {
+      "id": "quiz-js-401",
+      "title": "Certification Examination: JavaScript Engine Internals",
+      "passingScore": 80,
+      "timeLimitMinutes": 20,
+      "questions": [
+        {
+          "id": "q-js-1",
+          "text": "What happens when microtasks continuously enqueue additional microtasks during a single event loop turn?",
+          "options": [
+            "The browser forcibly pauses the microtask queue after 16 milliseconds to yield to paint frames.",
+            "The event loop drains all newly enqueued microtasks consecutively, blocking UI rendering and starving macrotasks.",
+            "Microtasks are converted automatically into macrotasks scheduled on the next iteration.",
+            "A RangeError: Maximum call stack size exceeded exception is thrown immediately."
+          ],
+          "correctIndex": 1,
+          "explanation": "According to the HTML specification, the microtask checkpoint does not exit until the microtask queue is completely empty. If microtasks perpetually enqueue more microtasks, the event loop starves UI rendering, user interaction, and all macrotasks."
+        },
+        {
+          "id": "q-js-2",
+          "text": "How does V8's TurboFan compiler handle a function if an object parameter exhibits differing internal shapes (Polymorphism) across calls?",
+          "options": [
+            "It re-allocates contiguous memory arrays on every single invocation.",
+            "It downgrades the inline cache to a megamorphic stub or triggers deoptimization back to Ignition bytecode.",
+            "It executes WebAssembly ahead-of-time compilation to bypass object lookups.",
+            "It permanently deletes the function from memory and raises an UncaughtTypeError."
+          ],
+          "correctIndex": 1,
+          "explanation": "Inline Caches (IC) optimize based on monomorphic assumptions. When object shapes vary beyond 4 different variants, the IC transitions to megamorphic, disabling speculative inlining and deoptimizing back to interpreted bytecode."
+        },
+        {
+          "id": "q-js-3",
+          "text": "Which memory heap space in V8 is responsible for holding ephemeral short-lived objects using a fast copying collector?",
+          "options": [
+            "Old Pointer Space",
+            "Large Object Space",
+            "New Space (Young Generation)",
+            "Code Space (Executable JIT memory)"
+          ],
+          "correctIndex": 2,
+          "explanation": "New Space (or Young Generation) is divided into two semi-spaces managed by the Scavenger collector. It allocates ephemeral objects rapidly and moves survivors to the Old Space upon surviving generational GC cycles."
+        },
+        {
+          "id": "q-js-4",
+          "text": "Which statement accurately describes the behavior of WeakMap keys in JavaScript?",
+          "options": [
+            "Keys can be arbitrary primitives or strings, which are automatically cleared on browser refresh.",
+            "Keys must be objects or non-registered symbols, allowing them to be garbage collected when no other strong references exist.",
+            "Keys are enumerable through Object.keys() only when the inspector devtools are attached.",
+            "Keys retain strong references until the WeakMap instance is explicitly destroyed with delete()."
+          ],
+          "correctIndex": 1,
+          "explanation": "WeakMap keys must be garbage-collectable values (objects or non-registered symbols). They do not create strong references, allowing the garbage collector to reclaim the key and value once external references cease."
+        }
+      ]
+    }
+  },
+  {
+    "id": "css-systems-201",
+    "title": "Modern CSS Systems & Scalable UI Engineering",
+    "slug": "modern-css-systems-scalable-ui",
+    "category": "Frontend Engineering",
+    "level": "Intermediate to Advanced",
+    "duration": "10 hours",
+    "rating": 4.88,
+    "enrollmentCount": 4290,
+    "instructor": {
+      "name": "Elena Rostova",
+      "role": "Staff Design Systems Engineer",
+      "organization": "DevPath UI Guild"
+    },
+    "description": "Architect robust, scalable web user interfaces without third-party utility bloat. Master CSS Custom Properties token design, Container Queries, Cascade Layers (@layer), subgrid layouts, and GPU hardware compositing.",
+    "prerequisites": ["Intermediate CSS experience", "Understanding of the Document Object Model (DOM)", "Experience with responsive layout patterns"],
+    "modules": [
+      {
+        "id": "mod-css-1",
+        "title": "Module 1: Design Tokens & Semantic Variable Hierarchies",
+        "duration": "3.5 hours",
+        "lessons": [
+          {
+            "id": "les-css-1-1",
+            "title": "Three-Tier Token Architecture for Enterprise Design Systems",
+            "readTime": "25 min",
+            "content": "### Three-Tier Token Architecture for Enterprise Design Systems\n\nScalable CSS architecture decouples raw values from component consumption using a three-tier token hierarchy:\n\n1. **Global (Primitive) Tokens**: Raw palette and scale values (`--color-blue-600: #2563eb;`, `--space-4: 1rem;`).\n2. **Semantic (Alias) Tokens**: Contextual roles (`--color-surface-primary`, `--color-border-focus`, `--color-text-brand`).\n3. **Component Tokens**: Scoped to specific elements (`--btn-padding-x`, `--card-elevation-shadow`).\n\n```css\n:root {\n  /* 1. Primitive */\n  --blue-500: #3b82f6;\n  --slate-900: #0f172a;\n  --slate-100: #f1f5f9;\n\n  /* 2. Semantic Default (Light) */\n  --bg-canvas: #ffffff;\n  --text-primary: var(--slate-900);\n  --border-subtle: #e2e8f0;\n}\n\n[data-theme=\"dark\"] {\n  /* Semantic Dark Overrides */\n  --bg-canvas: var(--slate-900);\n  --text-primary: var(--slate-100);\n  --border-subtle: #334155;\n}\n\n/* 3. Component Token Scoping */\n.ui-button {\n  --btn-bg: var(--blue-500);\n  background-color: var(--btn-bg);\n  color: #ffffff;\n  padding: 0.625rem 1.25rem;\n  border-radius: 6px;\n}\n```",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "function parseDesignToken(tokenName, fallback) {\n  const tokenMap = {\n    '--color-brand-primary': '#2563eb',\n    '--space-unit': '8px'\n  };\n  return tokenMap[tokenName] || fallback;\n}\n\nconsole.log('Brand Primary:', parseDesignToken('--color-brand-primary', '#000000'));",
+              "expectedOutput": "Brand Primary: #2563eb"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-css-2",
+        "title": "Module 2: Container Queries & Intrinsic Component Layouts",
+        "duration": "3.5 hours",
+        "lessons": [
+          {
+            "id": "les-css-2-1",
+            "title": "Container Queries: Beyond Global Viewports",
+            "readTime": "30 min",
+            "content": "### Container Queries: Beyond Global Viewports\n\nTraditional `@media` queries bind element styling to the total viewport width, which breaks modularity when components are placed in narrow sidebars or flexible dashboard grids.\n\nContainer queries allow components to inspect and react to the dimensions of their immediate parent container.\n\n```css\n.dashboard-widget {\n  container-type: inline-size;\n  container-name: widget-card;\n}\n\n@container widget-card (min-width: 480px) {\n  .widget-content {\n    display: grid;\n    grid-template-columns: 120px 1fr;\n    gap: 1.5rem;\n  }\n}\n\n@container widget-card (max-width: 479px) {\n  .widget-content {\n    display: flex;\n    flex-direction: column;\n    gap: 0.75rem;\n  }\n}\n```",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "function calculateCardLayout(containerWidth) {\n  return containerWidth >= 480 ? 'TWO_COLUMN_GRID' : 'SINGLE_COLUMN_STACK';\n}\n\nconsole.log('Layout for 520px container:', calculateCardLayout(520));",
+              "expectedOutput": "Layout for 520px container: TWO_COLUMN_GRID"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-css-3",
+        "title": "Module 3: Cascade Layers (@layer) & Specificity Engineering",
+        "duration": "3.0 hours",
+        "lessons": [
+          {
+            "id": "les-css-3-1",
+            "title": "Defeating Specificity Wars with Native @layer",
+            "readTime": "25 min",
+            "content": "### Defeating Specificity Wars with Native @layer\n\nCascade Layers provide explicit control over stylesheet precedence without resorting to high-specificity ID selectors or `!important` declarations.\n\n#### Declaring Precedence Order\n```css\n@layer reset, base, layout, components, utilities;\n\n@layer components {\n  .card-header {\n    background-color: #f8fafc;\n    color: #1e293b;\n  }\n}\n\n@layer utilities {\n  /* Utilities win over components regardless of selector specificity */\n  .text-white {\n    color: #ffffff;\n  }\n}\n```\n\nStyles declared in unlayered CSS always take precedence over layered CSS for normal declarations, while `!important` declarations invert the layer hierarchy.",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "const layers = ['reset', 'base', 'components', 'utilities'];\nfunction getWinningLayer(layerA, layerB) {\n  const indexA = layers.indexOf(layerA);\n  const indexB = layers.indexOf(layerB);\n  return indexA > indexB ? layerA : layerB;\n}\n\nconsole.log('Winning layer:', getWinningLayer('components', 'utilities'));",
+              "expectedOutput": "Winning layer: utilities"
+            }
+          }
+        ]
+      }
+    ],
+    "quiz": {
+      "id": "quiz-css-201",
+      "title": "Certification Examination: Modern CSS Systems",
+      "passingScore": 80,
+      "timeLimitMinutes": 15,
+      "questions": [
+        {
+          "id": "q-css-1",
+          "text": "How do CSS Cascade Layers (@layer) resolve conflicting rules between two different layers when selector specificity differs?",
+          "options": [
+            "The rule with the highest individual selector specificity wins regardless of layer ordering.",
+            "The layer defined later in the layer declaration sequence always takes precedence for normal declarations, regardless of selector specificity.",
+            "The browser concatenates styles and applies CSS animation keyframes across both selectors.",
+            "Layers with ID selectors override all other layers unconditionally."
+          ],
+          "correctIndex": 1,
+          "explanation": "In CSS Cascade Layers, layer order takes precedence over selector specificity. Normal declarations inside a later-declared layer will defeat declarations from an earlier layer, even if the earlier layer used a much higher-specificity selector."
+        },
+        {
+          "id": "q-css-2",
+          "text": "What property must be declared on a parent element to establish a container query context based on its width?",
+          "options": [
+            "contain: content layout;",
+            "container-type: inline-size;",
+            "display: container-flex;",
+            "content-visibility: auto;"
+          ],
+          "correctIndex": 1,
+          "explanation": "container-type: inline-size creates a containment context that monitors the element's inline axis (width in horizontal writing modes), allowing child elements to target it with @container queries."
+        },
+        {
+          "id": "q-css-3",
+          "text": "What is the primary benefit of a 3-tier token hierarchy (Primitive -> Semantic -> Component) in CSS?",
+          "options": [
+            "It decreases total HTTP transfer size by 90% via Gzip dictionary duplication.",
+            "It decouples raw brand colors from interface intent, enabling global theme switching without touching component stylesheets.",
+            "It enables client-side WebAssembly execution for all DOM mutations.",
+            "It converts all CSS declarations to static SVG vector files at build time."
+          ],
+          "correctIndex": 1,
+          "explanation": "Decoupling raw values into semantic tokens allows centralized theming (such as light/dark mode and high-contrast modes) while isolating component styling from branding changes."
+        },
+        {
+          "id": "q-css-4",
+          "text": "Which CSS properties trigger GPU hardware acceleration without causing CPU-bound layout recalculations or repaints?",
+          "options": [
+            "width, height, top, left",
+            "transform and opacity",
+            "margin, padding, border-width",
+            "box-shadow, color, background-color"
+          ],
+          "correctIndex": 1,
+          "explanation": "transform and opacity are handled directly during the GPU compositing phase without recalculating DOM layout (reflow) or repainting pixels, making them ideal for high-performance 60fps animations."
+        }
+      ]
+    }
+  },
+  {
+    "id": "web-sec-501",
+    "title": "Web Application Security & Defense Engineering",
+    "slug": "web-app-security-defense-engineering",
+    "category": "Security & Reliability",
+    "level": "Advanced",
+    "duration": "14 hours",
+    "rating": 4.97,
+    "enrollmentCount": 3410,
+    "instructor": {
+      "name": "Alexandre Dupont",
+      "role": "Principal Security Researcher",
+      "organization": "DevPath Defense Institute"
+    },
+    "description": "Engineered for web architects and senior developers. Rigorous defense against modern web vulnerabilities: OAuth 2.1 & PKCE, strict Content Security Policy, CSRF tokens, Subresource Integrity, and secure cookie headers.",
+    "prerequisites": ["Deep understanding of HTTP headers and Cookies", "Familiarity with Client-Server Auth flows", "Basic Cryptography fundamentals (Hashes, Signatures)"],
+    "modules": [
+      {
+        "id": "mod-sec-1",
+        "title": "Module 1: Authentication Architecture & Token Security",
+        "duration": "4.5 hours",
+        "lessons": [
+          {
+            "id": "les-sec-1-1",
+            "title": "OAuth 2.1, Proof Key for Code Exchange (PKCE) & Token Storage",
+            "readTime": "35 min",
+            "content": "### OAuth 2.1, Proof Key for Code Exchange (PKCE) & Token Storage\n\nStoring authentication tokens in `localStorage` exposes single-page applications to instantaneous credential exfiltration whenever a Cross-Site Scripting (XSS) vulnerability exists anywhere in third-party npm dependencies.\n\n#### Security Architecture Comparison\n\n```http\n/* Recommended Production Auth Cookie Configuration */\nSet-Cookie: __Host-session_id=d893f41a87b8;\n            Path=/;\n            Secure;\n            HttpOnly;\n            SameSite=Strict;\n            Max-Age=7200\n```\n\n- `__Host-` Prefix: Guarantees the cookie was set by the exact origin (not a subdomain), with `Path=/` and `Secure` flag.\n- `HttpOnly`: Completely blocks JavaScript DOM access via `document.cookie`, defusing automated XSS token theft.\n- `SameSite=Strict`: Protects against Cross-Site Request Forgery (CSRF) by preventing the cookie from being sent on cross-site navigations.\n\n#### The PKCE Flow for Single Page Applications\nPKCE protects the authorization code exchange from interception without requiring a client secret on public frontends.\n\n```javascript\n// Code Verifier and Code Challenge Generation\nasync function generatePKCE() {\n  const array = new Uint8Array(32);\n  window.crypto.getRandomValues(array);\n  const verifier = base64UrlEncode(array);\n\n  const encoder = new TextEncoder();\n  const data = encoder.encode(verifier);\n  const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);\n  const challenge = base64UrlEncode(new Uint8Array(hashBuffer));\n\n  return { verifier, challenge };\n}\n```",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "function inspectCookieSecurity(cookieFlags) {\n  const hasHttpOnly = cookieFlags.includes('HttpOnly');\n  const hasSecure = cookieFlags.includes('Secure');\n  const hasSameSite = cookieFlags.includes('SameSite=Strict');\n  \n  return {\n    resistantToXSSExfiltration: hasHttpOnly,\n    secureChannelOnly: hasSecure,\n    csrfHardened: hasSameSite\n  };\n}\n\nconst flags = 'Path=/; Secure; HttpOnly; SameSite=Strict';\nconsole.log(JSON.stringify(inspectCookieSecurity(flags)));",
+              "expectedOutput": "{\"resistantToXSSExfiltration\":true,\"secureChannelOnly\":true,\"csrfHardened\":true}"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-sec-2",
+        "title": "Module 2: Defense-in-Depth with Content Security Policy (CSP)",
+        "duration": "5.0 hours",
+        "lessons": [
+          {
+            "id": "les-sec-2-1",
+            "title": "Strict Nonce-Based Content Security Policy",
+            "readTime": "30 min",
+            "content": "### Strict Nonce-Based Content Security Policy\n\nA modern Content Security Policy does not rely on domain allowlists, which can often be bypassed via JSONP endpoints or CDN script hosting. Instead, strict nonce-based policies guarantee that only scripts bearing a cryptographically random, per-request nonce can execute.\n\n```http\nContent-Security-Policy: \n  default-src 'none';\n  script-src 'nonce-r4nd0mStr1ng' 'strict-dynamic';\n  style-src 'self' 'unsafe-inline';\n  font-src 'self' https://fonts.gstatic.com;\n  img-src 'self' data: https:;\n  connect-src 'self' https://api.devpath.io;\n  base-uri 'none';\n  form-action 'self';\n  frame-ancestors 'none';\n```\n\n- `frame-ancestors 'none'`: Hardens the platform against clickjacking by refusing iframe embedding.\n- `'strict-dynamic'`: Enables trusted scripts with the valid nonce to load child dependencies without requiring explicit domain allowlists.",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "function validateCSPDirective(cspString) {\n  const directives = cspString.split(';').map(d => d.trim());\n  const hasClickjackingDefense = directives.some(d => d.startsWith(\"frame-ancestors 'none'\"));\n  return { defendedAgainstClickjacking: hasClickjackingDefense };\n}\n\nconst policy = \"default-src 'self'; frame-ancestors 'none'\";\nconsole.log(JSON.stringify(validateCSPDirective(policy)));",
+              "expectedOutput": "{\"defendedAgainstClickjacking\":true}"
+            }
+          }
+        ]
+      },
+      {
+        "id": "mod-sec-3",
+        "title": "Module 3: Subresource Integrity (SRI) & Supply Chain Verification",
+        "duration": "4.5 hours",
+        "lessons": [
+          {
+            "id": "les-sec-3-1",
+            "title": "Subresource Integrity (SRI) Cryptographic Pinning",
+            "readTime": "25 min",
+            "content": "### Subresource Integrity (SRI) Cryptographic Pinning\n\nLoading third-party assets from CDNs opens web platforms to supply chain compromise. If an attacker compromises the external CDN, they can deliver arbitrary malicious JavaScript directly into your users' active sessions.\n\nSubresource Integrity ensures the user agent validates that fetched files match a pre-calculated cryptographic hash before executing them.\n\n```html\n<script \n  src=\"https://cdn.devpath.io/vendor/crypto-utils.min.js\"\n  integrity=\"sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC\"\n  crossorigin=\"anonymous\">\n</script>\n```",
+            "codeExercise": {
+              "language": "javascript",
+              "initialCode": "function verifyHashLength(integrityTag) {\n  const [algorithm, hash] = integrityTag.split('-');\n  return { algorithm, validLength: hash.length > 20 };\n}\n\nconsole.log(JSON.stringify(verifyHashLength('sha384-oqVuAfXRKap7fdgcCY5uykM6')));",
+              "expectedOutput": "{\"algorithm\":\"sha384\",\"validLength\":true}"
+            }
+          }
+        ]
+      }
+    ],
+    "quiz": {
+      "id": "quiz-sec-501",
+      "title": "Certification Examination: Web Application Security Engineering",
+      "passingScore": 80,
+      "timeLimitMinutes": 20,
+      "questions": [
+        {
+          "id": "q-sec-1",
+          "text": "Why is storing sensitive session JWTs inside window.localStorage considered a severe security vulnerability?",
+          "options": [
+            "LocalStorage data is automatically flushed when the user closes their browser tab.",
+            "Any injected Cross-Site Scripting (XSS) payload can access and exfiltrate window.localStorage without restriction.",
+            "LocalStorage requests bypass SSL/TLS encryption across the local network.",
+            "LocalStorage values can be read by any external domain on the public internet."
+          ],
+          "correctIndex": 1,
+          "explanation": "LocalStorage is directly accessible to any JavaScript executing in the same origin context. If an application suffers from an XSS vulnerability, an attacker can extract all tokens stored in localStorage. HttpOnly cookies prevent JavaScript DOM access entirely."
+        },
+        {
+          "id": "q-sec-2",
+          "text": "What protection is conferred by the '__Host-' cookie prefix?",
+          "options": [
+            "It automatically rotates the cookie value every 60 seconds using DNS over HTTPS.",
+            "The browser ensures the cookie must be Secure, have Path=/, and can only be set from the exact origin without subdomain inheritance.",
+            "It permits the cookie to be shared across completely distinct top-level domains.",
+            "It turns off cookie compression to prevent BREACH attacks."
+          ],
+          "correctIndex": 1,
+          "explanation": "The __Host- prefix tells browsers to accept the cookie only if it includes Secure, Path=/, and is set from the host itself without domain attributes, shielding against subdomain cookie hijacking."
+        },
+        {
+          "id": "q-sec-3",
+          "text": "What is the primary role of Proof Key for Code Exchange (PKCE) in OAuth 2.1?",
+          "options": [
+            "It acts as a substitute for HTTPS encryption across untrusted Wi-Fi networks.",
+            "It prevents malicious authorization code injection and interception on public clients that cannot securely store client secrets.",
+            "It generates one-time passwords for biometric hardware keys.",
+            "It automatically generates Content Security Policy headers on the client."
+          ],
+          "correctIndex": 1,
+          "explanation": "PKCE dynamically creates a cryptographic code_verifier and code_challenge pair, ensuring that only the original client who initiated the authorization request can exchange the returned authorization code for access tokens."
+        },
+        {
+          "id": "q-sec-4",
+          "text": "What will happen if a script loaded with an 'integrity' attribute fails the cryptographic hash check against the downloaded content?",
+          "options": [
+            "The browser executes the script in sandboxed mode and suppresses network calls.",
+            "The browser refuses to execute the script and triggers an error event on the element.",
+            "The browser prompts the user with an interactive dialog asking for confirmation.",
+            "The browser falls back to loading the file without integrity enforcement."
+          ],
+          "correctIndex": 1,
+          "explanation": "Subresource Integrity blocks execution immediately and emits an error event if the SHA hash of the fetched asset does not strictly match the expected integrity value specified in the tag."
+        }
+      ]
+    }
+  }
+]
